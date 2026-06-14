@@ -1,4 +1,4 @@
-import type { ErrorCode } from '@ccv/shared';
+import type { CardType, ErrorCode } from '@ccv/shared';
 
 /** API route paths — single source of truth for routing and tests. */
 export const ROUTES = {
@@ -29,6 +29,11 @@ export const ERRORS = {
   LUHN_FAILED: 'Card number failed the Luhn checksum.',
   INVALID_BODY: 'Invalid request body.',
   INTERNAL: 'Internal server error.',
+} as const;
+
+/** Messages that need a value interpolated at the point of failure. */
+export const MESSAGES = {
+  networkLength: (type: CardType) => `Card number length is not valid for ${type}.`,
 } as const;
 
 /** Machine-readable error codes returned in API responses. */

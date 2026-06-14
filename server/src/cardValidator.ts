@@ -1,40 +1,40 @@
 import { isValidLuhn } from './luhn.js';
-import { getCardType } from './cardType.js';
-import { CARD_LENGTH, ERRORS } from './constants.js';
+import { getCardType, hasNetworkLength } from './cardType.js';
+import { CARD_LENGTH, ERRORS, MESSAGES } from './constants.js';
 import type { ValidationResponse } from '@ccv/shared';
 
-/**
- * Validates credit card numbers: input sanitisation, structural rules
- * (digits-only, length, non-zero), and the Luhn checksum. Composes the pure
- * `isValidLuhn` and `getCardType` helpers behind one cohesive entry point.
- */
-export class CardValidator {
-  validate(cardNumber: string): ValidationResponse {
-    const digits = this.sanitize(cardNumber);
-
-    // One or more characters, all digits.
-    if (!/^\d+$/.test(digits)) {
-      return this.invalid(ERRORS.DIGITS_ONLY);
-    }
-    if (digits.length < CARD_LENGTH.MIN || digits.length > CARD_LENGTH.MAX) {
-      return this.invalid(ERRORS.LENGTH_RANGE);
-    }
-    // Every character is a zero.
-    if (/^0+$/.test(digits)) {
-      return this.invalid(ERRORS.ALL_ZEROS);
-    }
-    if (!isValidLuhn(digits)) {
-      return this.invalid(ERRORS.LUHN_FAILED);
-    }
-    return { valid: true, cardType: getCardType(digits) };
-  }
-
-  private sanitize(cardNumber: string): string {
-    // Remove spaces and dashes from common paste formats.
-    return cardNumber.replace(/[\s-]/g, '');
-  }
-
-  private invalid(error: string): ValidationResponse {
-    return { valid: false, error };
-  }
+/** A rule the sanitised digits must satisfy, and the reason given when they do not. */
+interface Rule {
+  readonly holds: (digits: string) => boolean;
+  readonly reason: (digits: string) => string;
 }
+
+/**
+ * Rules in evaluation order: structural checks first, checksum last, so the
+ * message a caller sees names the most specific thing that is wrong. The
+ * all-zeros rule is not redundant — '0000000000000000' satisfies Luhn, since a
+ * sum of zero is a multiple of ten.
+ */
+const RULES: readonly Rule[] = [
+  { holds: (digits) => /^\d+$/.test(digits), reason: () => ERRORS.DIGITS_ONLY },
+  {
+    holds: (digits) => digits.length >= CARD_LENGTH.MIN && digits.length <= CARD_LENGTH.MAX,
+    reason: () => ERRORS.LENGTH_RANGE,
+  },
+  { holds: (digits) => !/^0+$/.test(digits), reason: () => ERRORS.ALL_ZEROS },
+  { holds: hasNetworkLength, reason: (digits) => MESSAGES.networkLength(getCardType(digits)) },
+  { holds: isValidLuhn, reason: () => ERRORS.LUHN_FAILED },
+];
+
+/**
+ * Validates a credit card number: sanitises the input, applies the structural
+ * rules, then the Luhn checksum, and names the network on success.
+ */
+export const validateCard = (cardNumber: string): ValidationResponse => {
+  // Accept the spaces and dashes people paste from a physical card.
+  const digits = cardNumber.replace(/[\s-]/g, '');
+  const failed = RULES.find((rule) => !rule.holds(digits));
+
+  if (failed) return { valid: false, error: failed.reason(digits) };
+  return { valid: true, cardType: getCardType(digits) };
+};
