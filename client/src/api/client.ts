@@ -2,9 +2,10 @@ import axios, { type AxiosInstance } from 'axios';
 import { API_CONFIG } from '../constants';
 
 /**
- * Base HTTP client over one configured axios instance. The response interceptor
- * unwraps `data`; failures reject with the native AxiosError. Domain services
- * extend this and call the protected verbs.
+ * Base HTTP client over one configured axios instance. Verbs return the
+ * response body directly; failures reject with the native AxiosError, whose
+ * `response` field tells a 4xx envelope apart from a dead connection. Domain
+ * services extend this and call the protected verbs.
  */
 export class ApiClient {
   private readonly http: AxiosInstance;
@@ -15,10 +16,10 @@ export class ApiClient {
       headers: { 'Content-Type': API_CONFIG.CONTENT_TYPE },
       timeout: API_CONFIG.TIMEOUT,
     });
-    this.http.interceptors.response.use((response) => response.data);
   }
 
-  protected post<T>(url: string, data?: unknown): Promise<T> {
-    return this.http.post<T, T>(url, data);
+  protected async post<T>(url: string, data?: unknown): Promise<T> {
+    const { data: body } = await this.http.post<T>(url, data);
+    return body;
   }
 }

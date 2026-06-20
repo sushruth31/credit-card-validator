@@ -22,6 +22,7 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
     return;
   }
 
-  console.error('Unhandled error:', err);
+  // Log the detail, return none: an unexpected failure must not leak internals.
+  process.stderr.write(`Unhandled error: ${String(err)}\n`);
   res.status(500).json({ valid: false, error: ERRORS.INTERNAL, code: ERROR_CODES.INTERNAL });
 };
