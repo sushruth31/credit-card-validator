@@ -1,53 +1,7 @@
-import { useEffect, useState } from 'react';
-import { AxiosError } from 'axios';
-import { cardValidatorApi } from './api/cardValidator';
-import { UI, MESSAGES } from './constants';
+import { useState } from 'react';
+import { formatCardNumber, toDigits } from './format';
+import { useValidation } from './useValidation';
 import type { ValidationResponse } from '@ccv/shared';
-import { formatCardNumber } from './format';
-
-/** Validates the card number on the backend, debounced as the user types. */
-const useValidation = (digits: string) => {
-  const [result, setResult] = useState<ValidationResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!digits) {
-      setResult(null);
-      return;
-    }
-    let active = true;
-    setLoading(true);
-    const timer = setTimeout(() => {
-      cardValidatorApi
-        .validate(digits)
-        .then((r) => {
-          if (active) setResult(r);
-        })
-        .catch((e: unknown) => {
-          if (!active) return;
-          // 4xx/5xx: the request completed and the API answered with its own
-          // error envelope — show that reason. Anything without a usable
-          // response (network down, timeout) gets the generic fallback.
-          const body =
-            e instanceof AxiosError
-              ? (e.response?.data as ValidationResponse | undefined)
-              : undefined;
-          setResult(
-            typeof body?.error === 'string' ? body : { valid: false, error: MESSAGES.UNAVAILABLE },
-          );
-        })
-        .finally(() => {
-          if (active) setLoading(false);
-        });
-    }, UI.DEBOUNCE_MS);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [digits]);
-
-  return { result, loading };
-};
 
 function Result({
   digits,
@@ -66,8 +20,7 @@ function Result({
 
 export default function App() {
   const [value, setValue] = useState('');
-  // Keep digits only, capped at the maximum card length.
-  const digits = value.replace(/\D/g, '').slice(0, UI.MAX_CARD_DIGITS);
+  const digits = toDigits(value);
   const { result, loading } = useValidation(digits);
 
   return (

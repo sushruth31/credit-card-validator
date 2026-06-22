@@ -18,7 +18,6 @@ const readApiBaseUrl = (): string => {
 export const API_CONFIG = {
   BASE_URL: readApiBaseUrl(),
   TIMEOUT: 5000,
-  CONTENT_TYPE: 'application/json',
 } as const;
 
 /** Endpoints called by the client. */
