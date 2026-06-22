@@ -11,9 +11,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 20.12 is the floor: the server loads its .env with
-        # `node --env-file-if-exists`, added in that release.
-        node: ['20.12', '22']
+        # 20.19 is the floor: the server loads its .env with
+        # `node --env-file-if-exists`, which landed in 22.9 and was backported
+        # to the 20.x line in 20.19. Earlier 20.x aborts on the unknown flag.
+        node: ['20.19', '22']
     steps:
       - uses: actions/checkout@v4
 
@@ -26,3 +27,8 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+
+      # lint/test/build never touch dev or start, so the engines floor would
+      # otherwise go unverified: assert the runtime accepts the flag they use.
+      - name: Assert the Node floor supports --env-file-if-exists
+        run: node --env-file-if-exists=.env.example -e ''
