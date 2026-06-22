@@ -3,6 +3,14 @@ import { ValidationError } from './errors.js';
 import { ERROR_CODES, ERRORS } from './constants.js';
 
 /**
+ * Everything worth keeping about a thrown value. The stack is the point: the
+ * 500 response deliberately says nothing, so this line is the only record of
+ * what actually failed.
+ */
+export const describeError = (err: unknown): string =>
+  err instanceof Error ? (err.stack ?? err.message) : String(err);
+
+/**
  * Central error middleware. Renders known ValidationErrors and body-parser
  * failures (malformed JSON, oversized payloads) with their real status; hides
  * anything unexpected behind a generic 500. Every route inherits this for free.
@@ -23,6 +31,6 @@ export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   }
 
   // Log the detail, return none: an unexpected failure must not leak internals.
-  process.stderr.write(`Unhandled error: ${String(err)}\n`);
+  process.stderr.write(`Unhandled error: ${describeError(err)}\n`);
   res.status(500).json({ valid: false, error: ERRORS.INTERNAL, code: ERROR_CODES.INTERNAL });
 };
