@@ -20,9 +20,10 @@ and pinned down by exhaustive tests.
 | Express 5          | Errors thrown anywhere in the request path reach the error middleware, so handlers stay free of try/catch.                                                                         |
 | React 19 + Vite    | The UI is a form and a status line; anything heavier would be scaffolding for its own sake.                                                                                        |
 | Vitest + Supertest | One runner for both workspaces; the client suite reuses the app's own Vite config. Supertest exercises the app factory without binding a port.                                     |
-| axios              | `AxiosError.response` is what lets the UI tell a 4xx error envelope from a dead connection.                                                                                        |
+| axios              | `AxiosError.response` is what lets the api module tell a 4xx error envelope from a dead connection.                                                                                |
 
-Node ≥ 20.12 (the server loads its `.env` with `node --env-file-if-exists`).
+Node ≥ 20.19 — the server loads its `.env` with `node --env-file-if-exists`, which landed
+in 22.9 and was backported to the 20.x line in 20.19. CI runs 20.19 and 22.
 
 ## Running it
 
@@ -35,14 +36,15 @@ npm run dev            # API on :3001, UI on :5173
 ```
 
 ```bash
-npm test         # 42 tests
+npm test         # 46 tests
 npm run lint     # eslint + prettier
 npm run build    # set VITE_API_URL first for a real deployment
 ```
 
-Config is read and validated at startup: `PORT`, `CORS_ORIGIN`, `NODE_ENV`, `VITE_API_URL`.
-Every one is documented in [`.env.example`](.env.example). A bad `PORT`, or a missing
-`CORS_ORIGIN` under `NODE_ENV=production`, aborts the process and names the variable.
+The server reads and validates `PORT`, `CORS_ORIGIN` and `NODE_ENV` at import: a bad `PORT`,
+or a missing `CORS_ORIGIN` under `NODE_ENV=production`, aborts the process and names the
+variable. `VITE_API_URL` is a client build-time input — Vite inlines it, so it is a different
+process and a different lifecycle. All four are documented in [`.env.example`](.env.example).
 
 ## Architecture
 
@@ -50,8 +52,8 @@ Every one is documented in [`.env.example`](.env.example). A bad `PORT`, or a mi
  client/                                   server/
  ┌──────────────┐  POST /api/validate  ┌──────────────────┐
  │ App.tsx      │ ───────────────────► │ validateRequest  │  shape guard, throws
- │  debounce    │   { cardNumber }     │      ↓           │
- │  render only │                      │ validateCard     │  sanitise → rules → Luhn
+ │ useValidation│   { cardNumber }     │      ↓           │
+ │ api client   │                      │ validateCard     │  sanitise → rules → Luhn
  │      ▲       │ ◄─────────────────── │      ↓           │
  └──────────────┘  { valid, cardType } │ errorHandler     │  the one place an HTTP
                         ▲              └──────────────────┘  failure becomes JSON
@@ -59,15 +61,17 @@ Every one is documented in [`.env.example`](.env.example). A bad `PORT`, or a mi
                   shared/types.ts  ── the contract, imported by both sides
 ```
 
-| Module                        | Responsibility                                                       |
-| ----------------------------- | -------------------------------------------------------------------- |
-| `server/src/luhn.ts`          | The checksum. Pure, dependency-free, assumes digits.                 |
-| `server/src/cardType.ts`      | Issuer table: prefix rule + legal lengths per network.               |
-| `server/src/cardValidator.ts` | Sanitises input and walks an ordered table of rules.                 |
-| `server/src/config.ts`        | Reads and validates the environment once, at import.                 |
-| `server/src/app.ts`           | App factory, separate from the `listen` call so tests skip the port. |
-| `client/src/format.ts`        | Display-only grouping into blocks of four.                           |
-| `client/src/App.tsx`          | Renders state. No validation logic lives here.                       |
+| Module                            | Responsibility                                                       |
+| --------------------------------- | -------------------------------------------------------------------- |
+| `server/src/luhn.ts`              | The checksum. Pure, dependency-free, assumes digits.                 |
+| `server/src/cardType.ts`          | Issuer table: prefix rule + legal lengths per network.               |
+| `server/src/cardValidator.ts`     | Sanitises input and walks an ordered table of rules.                 |
+| `server/src/config.ts`            | Reads and validates the environment once, at import.                 |
+| `server/src/app.ts`               | App factory, separate from the `listen` call so tests skip the port. |
+| `client/src/api/cardValidator.ts` | The one call to the API. Resolves failures into a verdict.           |
+| `client/src/useValidation.ts`     | Debounce, staleness guard, and the loading flag.                     |
+| `client/src/format.ts`            | Display-only grouping into blocks of four.                           |
+| `client/src/App.tsx`              | Renders state. No validation logic lives here.                       |
 
 ## Design notes
 
@@ -96,9 +100,13 @@ Every one is documented in [`.env.example`](.env.example). A bad `PORT`, or a mi
   checks first and the checksum last, so the message names the most specific thing that is wrong
   rather than a generic failure.
 
-- **A stale response cannot overwrite a newer one.** Each debounced effect (400 ms) captures an
-  `active` flag that its cleanup clears, so a slow request that resolves after the user has typed
-  again is dropped instead of flashing an outdated verdict.
+- **A stale response cannot overwrite a newer one.** Each debounced effect (400 ms) hands its
+  task an `isCurrent()` the cleanup flips, so a slow request that resolves after the user has
+  typed again is dropped instead of flashing an outdated verdict.
+
+- **The transport layer stops at the api module.** `validateCard` never rejects: an `AxiosError`
+  carrying a 4xx envelope resolves to that envelope, anything else to "service unavailable". The
+  hook and the component therefore know one shape, and no `e.response?.data` shows up in JSX.
 
 - **`CORS_ORIGIN` is required in production rather than defaulted.** A localhost fallback would
   fail silently in the browser and a `*` fallback would be worse, so the process refuses to
@@ -106,16 +114,18 @@ Every one is documented in [`.env.example`](.env.example). A bad `PORT`, or a mi
 
 ## Tests
 
-42 tests. The server suites run the real code end to end; only the client stubs the network.
+46 tests. The server suites run the real code end to end; only the client stubs the network.
 
-| Suite                   | Covers                                                                                                                                                    |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `luhn.test.ts`          | Check-digit uniqueness, the doubling fold, right-to-left parity, leading zeros, exhaustive substitution and transposition sweeps, the `0`/`9` blind spot. |
-| `cardType.test.ts`      | Every network prefix and both edges of every range; Amex `34`/`37` against its JCB and Diners neighbours; per-network length rules.                       |
-| `cardValidator.test.ts` | Rule ordering and messages, all-zeros, separator stripping, network-length rejection.                                                                     |
-| `config.test.ts`        | Defaults, overrides, and both fail-fast paths.                                                                                                            |
-| `app.test.ts`           | HTTP status contract: 200 with a verdict, 400 on a bad shape or malformed JSON, 413 on an oversized body.                                                 |
-| `App.test.tsx`          | Rendered states, and that an API error envelope is shown while a dead connection falls back.                                                              |
+| Suite                       | Covers                                                                                                                                                    |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `luhn.test.ts`              | Check-digit uniqueness, the doubling fold, right-to-left parity, leading zeros, exhaustive substitution and transposition sweeps, the `0`/`9` blind spot. |
+| `cardType.test.ts`          | Every network prefix and both edges of every range; Amex `34`/`37` against its JCB and Diners neighbours; per-network length rules.                       |
+| `cardValidator.test.ts`     | Rule ordering and messages, all-zeros, separator stripping, network-length rejection.                                                                     |
+| `config.test.ts`            | Defaults, overrides, and both fail-fast paths.                                                                                                            |
+| `app.test.ts`               | HTTP status contract: 200 with a verdict, 400 on a bad shape or malformed JSON, 413 on an oversized body.                                                 |
+| `errorHandler.test.ts`      | That an unexpected failure is logged with its stack, and that a non-Error throw still logs.                                                               |
+| `api/cardValidator.test.ts` | That a 4xx error envelope reaches the UI intact while a dead connection becomes the generic fallback.                                                     |
+| `App.test.tsx`              | Rendered states, and that sixteen keystrokes produce one request.                                                                                         |
 
 Numbers used in the tests are published test values or generated with a check-digit helper —
 none are real cards.
